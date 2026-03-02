@@ -1,22 +1,30 @@
+import argparse
+import cv2
+import numpy as np
 import subprocess
 import sys
 from pathlib import Path
-
-import cv2
-import numpy as np
-
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm"}
 DATA_DIR = Path(__file__).parent / "data"
 ASSETS_DIR = Path(__file__).parent / "assets"
 
-_watermark = cv2.imread(str(ASSETS_DIR / "watermark.png"))
-_watermark = cv2.resize(_watermark, (1235 - 1105, 680 - 660))
+PROFILES: dict[str, dict[str, str]] = {
+    "success": {
+        "cover": "cover_success.jpg",
+        "watermark": "watermark_success.png",
+    },
+    "ai": {
+        "cover": "cover_ai.png",
+        "watermark": "watermark_ai.png",
+    },
+}
 
 
 def find_input_video() -> Path:
     videos = [
-        p for p in DATA_DIR.iterdir()
+        p
+        for p in DATA_DIR.iterdir()
         if p.suffix.lower() in VIDEO_EXTENSIONS and not p.stem.endswith("_processed")
     ]
     if len(videos) == 0:
@@ -27,21 +35,25 @@ def find_input_video() -> Path:
     return videos[0]
 
 
-def process_frame(frame: np.ndarray) -> np.ndarray:
+def process_frame(frame: np.ndarray, watermark: np.ndarray) -> np.ndarray:
     result = frame.copy()
-    result[660:680, 1105:1235] = _watermark
+    result[660:680, 1105:1235] = watermark
     return result
 
 
 def crop_frame(frame: np.ndarray) -> np.ndarray:
     """上下固定裁 5px，左右固定裁 10px。"""
     h, w = frame.shape[:2]
-    return frame[5:h - 5, 10:w - 10]
+    return frame[5 : h - 5, 10 : w - 10]
 
 
-def process_video(input_path: Path) -> Path:
+def process_video(input_path: Path, profile: str) -> Path:
     output_path = input_path.parent / f"{input_path.stem}_processed{input_path.suffix}"
     temp_path = input_path.parent / f"{input_path.stem}_temp{input_path.suffix}"
+
+    assets = PROFILES[profile]
+    watermark = cv2.imread(str(ASSETS_DIR / assets["watermark"]))
+    watermark = cv2.resize(watermark, (1235 - 1105, 680 - 660))
 
     cap = cv2.VideoCapture(str(input_path))
     if not cap.isOpened():
@@ -59,10 +71,10 @@ def process_video(input_path: Path) -> Path:
     if canvas_h % 2 != 0:
         canvas_h += 1
 
-    # 載入並縮放 cover.jpg，與白底混合
-    cover_src = cv2.imread(str(ASSETS_DIR / "cover.jpg"))
+    # 載入並縮放 cover，與白底混合
+    cover_src = cv2.imread(str(ASSETS_DIR / assets["cover"]))
     if cover_src is None:
-        raise RuntimeError("找不到 cover.jpg，請放在專案根目錄")
+        raise RuntimeError(f"找不到 cover 圖檔：{assets['cover']}")
     cover_h_scaled = round(canvas_w * cover_src.shape[0] / cover_src.shape[1])
     cover_resized = cv2.resize(cover_src, (canvas_w, cover_h_scaled))
     white = np.full_like(cover_resized, 255)
@@ -71,7 +83,9 @@ def process_video(input_path: Path) -> Path:
     video_area_h = canvas_h - cover_h_scaled * 2
 
     print(f"輸入影片：{input_path.name}  ({src_w}x{src_h})")
-    print(f"輸出畫布：{canvas_w}x{canvas_h}（9:16），cover 高度：{cover_h_scaled}px，影片區域：{video_area_h}px")
+    print(
+        f"輸出畫布：{canvas_w}x{canvas_h}（9:16），cover 高度：{cover_h_scaled}px，影片區域：{video_area_h}px"
+    )
     print(f"輸出影片：{output_path.name}")
     print("處理中...")
 
@@ -86,7 +100,7 @@ def process_video(input_path: Path) -> Path:
                 break
 
             # 水印覆蓋
-            frame = process_frame(frame)
+            frame = process_frame(frame, watermark)
 
             # 裁切黑邊
             cropped = crop_frame(frame)
@@ -102,8 +116,8 @@ def process_video(input_path: Path) -> Path:
             canvas = np.full((canvas_h, canvas_w, 3), 255, dtype=np.uint8)
             canvas[0:cover_h_scaled, 0:canvas_w] = cover
             y_offset = cover_h_scaled + (video_area_h - new_h) // 2
-            canvas[y_offset:y_offset + new_h, 0:new_w] = resized
-            canvas[canvas_h - cover_h_scaled:canvas_h, 0:canvas_w] = cover
+            canvas[y_offset : y_offset + new_h, 0:new_w] = resized
+            canvas[canvas_h - cover_h_scaled : canvas_h, 0:canvas_w] = cover
             out.write(canvas)
 
             frame_idx += 1
@@ -117,17 +131,27 @@ def process_video(input_path: Path) -> Path:
     print("合併音訊中...")
     subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-i", str(temp_path),
-            "-i", str(input_path),
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "18",
-            "-c:a", "aac",
-            "-map", "0:v:0",
-            "-map", "1:a:0",
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(temp_path),
+            "-i",
+            str(input_path),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-c:a",
+            "aac",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
             "-shortest",
-            "-movflags", "+faststart",
+            "-movflags",
+            "+faststart",
             str(output_path),
         ],
         check=True,
@@ -139,9 +163,18 @@ def process_video(input_path: Path) -> Path:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="NotebookLM 浮水印移除工具")
+    parser.add_argument(
+        "--profile",
+        choices=list(PROFILES.keys()),
+        required=True,
+        help="選擇素材組合：" + ", ".join(PROFILES.keys()),
+    )
+    args = parser.parse_args()
+
     try:
         input_path = find_input_video()
-        process_video(input_path)
+        process_video(input_path, args.profile)
     except (FileNotFoundError, ValueError, RuntimeError) as e:
         print(f"錯誤：{e}", file=sys.stderr)
         sys.exit(1)
