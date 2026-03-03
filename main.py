@@ -7,7 +7,7 @@ from pathlib import Path
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm"}
 DATA_DIR = Path(__file__).parent / "data"
-ASSETS_DIR = Path(__file__).parent / "assets"
+IMAGES_DIR = Path(__file__).parent / "assets" / "images"
 
 PROFILES: dict[str, dict[str, str]] = {
     "success": {
@@ -52,7 +52,7 @@ def process_video(input_path: Path, profile: str) -> Path:
     temp_path = input_path.parent / f"{input_path.stem}_temp{input_path.suffix}"
 
     assets = PROFILES[profile]
-    watermark = cv2.imread(str(ASSETS_DIR / assets["watermark"]))
+    watermark = cv2.imread(str(IMAGES_DIR / assets["watermark"]))
     watermark = cv2.resize(watermark, (1235 - 1105, 680 - 660))
 
     cap = cv2.VideoCapture(str(input_path))
@@ -72,7 +72,7 @@ def process_video(input_path: Path, profile: str) -> Path:
         canvas_h += 1
 
     # 載入並縮放 cover，與白底混合
-    cover_src = cv2.imread(str(ASSETS_DIR / assets["cover"]))
+    cover_src = cv2.imread(str(IMAGES_DIR / assets["cover"]))
     if cover_src is None:
         raise RuntimeError(f"找不到 cover 圖檔：{assets['cover']}")
     cover_h_scaled = round(canvas_w * cover_src.shape[0] / cover_src.shape[1])
