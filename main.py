@@ -11,7 +11,7 @@ MUSIC_EXTENSIONS = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg"}
 DATA_DIR = Path(__file__).parent / "data"
 IMAGES_DIR = Path(__file__).parent / "assets" / "images"
 MUSIC_DIR = Path(__file__).parent / "assets" / "music"
-BGM_VOLUME = 0.01  # BGM 相對於原聲的音量比例（1.0 = 100%）
+BGM_VOLUME = 0.02  # BGM 相對於原聲的音量比例（1.0 = 100%）
 
 PROFILES: dict[str, dict[str, str]] = {
     "success": {
