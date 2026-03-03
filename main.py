@@ -1,13 +1,17 @@
 import argparse
 import cv2
 import numpy as np
+import random
 import subprocess
 import sys
 from pathlib import Path
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm"}
+MUSIC_EXTENSIONS = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg"}
 DATA_DIR = Path(__file__).parent / "data"
 IMAGES_DIR = Path(__file__).parent / "assets" / "images"
+MUSIC_DIR = Path(__file__).parent / "assets" / "music"
+BGM_VOLUME = 0.01  # BGM 相對於原聲的音量比例（1.0 = 100%）
 
 PROFILES: dict[str, dict[str, str]] = {
     "success": {
@@ -19,6 +23,28 @@ PROFILES: dict[str, dict[str, str]] = {
         "watermark": "watermark_ai.png",
     },
 }
+
+
+def has_audio(video_path: Path) -> bool:
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=codec_type",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return bool(result.stdout.strip())
+
+
+def pick_bgm() -> Path | None:
+    if not MUSIC_DIR.exists():
+        return None
+    tracks = [p for p in MUSIC_DIR.iterdir() if p.suffix.lower() in MUSIC_EXTENSIONS]
+    return random.choice(tracks) if tracks else None
 
 
 def find_input_video() -> Path:
@@ -128,34 +154,71 @@ def process_video(input_path: Path, profile: str) -> Path:
         cap.release()
         out.release()
 
+    bgm = pick_bgm()
     print("合併音訊中...")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(temp_path),
-            "-i",
-            str(input_path),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-crf",
-            "18",
-            "-c:a",
-            "aac",
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            "-shortest",
-            "-movflags",
-            "+faststart",
-            str(output_path),
-        ],
-        check=True,
-    )
+    if bgm:
+        print(f"背景音樂：{bgm.name}")
+        if has_audio(input_path):
+            # 原聲 + BGM 各自響度正規化後混音
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i", str(temp_path),
+                    "-i", str(input_path),
+                    "-stream_loop", "-1", "-i", str(bgm),
+                    "-filter_complex", f"[2:a]volume={BGM_VOLUME}[a2];[1:a][a2]amix=inputs=2:duration=shortest:normalize=0[aout]",
+                    "-map", "0:v:0",
+                    "-map", "[aout]",
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "18",
+                    "-c:a", "aac",
+                    "-shortest",
+                    "-movflags", "+faststart",
+                    str(output_path),
+                ],
+                check=True,
+            )
+        else:
+            # 無原聲，只用 BGM
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i", str(temp_path),
+                    "-stream_loop", "-1", "-i", str(bgm),
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "18",
+                    "-c:a", "aac",
+                    "-shortest",
+                    "-movflags", "+faststart",
+                    str(output_path),
+                ],
+                check=True,
+            )
+    else:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i", str(temp_path),
+                "-i", str(input_path),
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "18",
+                "-c:a", "aac",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-shortest",
+                "-movflags", "+faststart",
+                str(output_path),
+            ],
+            check=True,
+        )
     temp_path.unlink()
 
     print(f"完成！已儲存至：{output_path}")
