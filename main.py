@@ -1,7 +1,6 @@
 import argparse
 import cv2
 import numpy as np
-import random
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +10,7 @@ MUSIC_EXTENSIONS = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg"}
 DATA_DIR = Path(__file__).parent / "data"
 IMAGES_DIR = Path(__file__).parent / "assets" / "images"
 MUSIC_DIR = Path(__file__).parent / "assets" / "music"
-BGM_VOLUME = 0.02  # BGM 相對於原聲的音量比例（1.0 = 100%）
+DEFAULT_BGM_VOLUME = 0.02  # BGM 相對於原聲的音量比例（1.0 = 100%）
 
 PROFILES: dict[str, dict[str, str]] = {
     "success": {
@@ -28,10 +27,15 @@ PROFILES: dict[str, dict[str, str]] = {
 def has_audio(video_path: Path) -> bool:
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error",
-            "-select_streams", "a:0",
-            "-show_entries", "stream=codec_type",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             str(video_path),
         ],
         capture_output=True,
@@ -40,11 +44,14 @@ def has_audio(video_path: Path) -> bool:
     return bool(result.stdout.strip())
 
 
-def pick_bgm() -> Path | None:
+def pick_bgm(bgm_num: int) -> Path:
     if not MUSIC_DIR.exists():
-        return None
-    tracks = [p for p in MUSIC_DIR.iterdir() if p.suffix.lower() in MUSIC_EXTENSIONS]
-    return random.choice(tracks) if tracks else None
+        raise FileNotFoundError(f"找不到音樂資料夾：{MUSIC_DIR}")
+    filename = f"bgm{bgm_num:03d}"
+    for p in MUSIC_DIR.iterdir():
+        if p.stem == filename and p.suffix.lower() in MUSIC_EXTENSIONS:
+            return p
+    raise FileNotFoundError(f"找不到 BGM 檔案：{filename}.*（在 {MUSIC_DIR}）")
 
 
 def find_input_video() -> Path:
@@ -73,7 +80,9 @@ def crop_frame(frame: np.ndarray) -> np.ndarray:
     return frame[5 : h - 5, 10 : w - 10]
 
 
-def process_video(input_path: Path, profile: str) -> Path:
+def process_video(
+    input_path: Path, profile: str, bgm_num: int, bgm_vol: float = DEFAULT_BGM_VOLUME
+) -> Path:
     output_path = input_path.parent / f"{input_path.stem}_processed{input_path.suffix}"
     temp_path = input_path.parent / f"{input_path.stem}_temp{input_path.suffix}"
 
@@ -154,7 +163,7 @@ def process_video(input_path: Path, profile: str) -> Path:
         cap.release()
         out.release()
 
-    bgm = pick_bgm()
+    bgm = pick_bgm(bgm_num)
     print("合併音訊中...")
     if bgm:
         print(f"背景音樂：{bgm.name}")
@@ -164,18 +173,31 @@ def process_video(input_path: Path, profile: str) -> Path:
                 [
                     "ffmpeg",
                     "-y",
-                    "-i", str(temp_path),
-                    "-i", str(input_path),
-                    "-stream_loop", "-1", "-i", str(bgm),
-                    "-filter_complex", f"[2:a]volume={BGM_VOLUME}[a2];[1:a][a2]amix=inputs=2:duration=shortest:normalize=0[aout]",
-                    "-map", "0:v:0",
-                    "-map", "[aout]",
-                    "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "18",
-                    "-c:a", "aac",
+                    "-i",
+                    str(temp_path),
+                    "-i",
+                    str(input_path),
+                    "-stream_loop",
+                    "-1",
+                    "-i",
+                    str(bgm),
+                    "-filter_complex",
+                    f"[2:a]volume={bgm_vol}[a2];[1:a][a2]amix=inputs=2:duration=shortest:normalize=0[aout]",
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "[aout]",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "fast",
+                    "-crf",
+                    "18",
+                    "-c:a",
+                    "aac",
                     "-shortest",
-                    "-movflags", "+faststart",
+                    "-movflags",
+                    "+faststart",
                     str(output_path),
                 ],
                 check=True,
@@ -186,16 +208,27 @@ def process_video(input_path: Path, profile: str) -> Path:
                 [
                     "ffmpeg",
                     "-y",
-                    "-i", str(temp_path),
-                    "-stream_loop", "-1", "-i", str(bgm),
-                    "-map", "0:v:0",
-                    "-map", "1:a:0",
-                    "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "18",
-                    "-c:a", "aac",
+                    "-i",
+                    str(temp_path),
+                    "-stream_loop",
+                    "-1",
+                    "-i",
+                    str(bgm),
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "fast",
+                    "-crf",
+                    "18",
+                    "-c:a",
+                    "aac",
                     "-shortest",
-                    "-movflags", "+faststart",
+                    "-movflags",
+                    "+faststart",
                     str(output_path),
                 ],
                 check=True,
@@ -205,16 +238,25 @@ def process_video(input_path: Path, profile: str) -> Path:
             [
                 "ffmpeg",
                 "-y",
-                "-i", str(temp_path),
-                "-i", str(input_path),
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "18",
-                "-c:a", "aac",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
+                "-i",
+                str(temp_path),
+                "-i",
+                str(input_path),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "18",
+                "-c:a",
+                "aac",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
                 "-shortest",
-                "-movflags", "+faststart",
+                "-movflags",
+                "+faststart",
                 str(output_path),
             ],
             check=True,
@@ -233,11 +275,23 @@ def main():
         required=True,
         help="選擇素材組合：" + ", ".join(PROFILES.keys()),
     )
+    parser.add_argument(
+        "--bgm_num",
+        type=int,
+        required=True,
+        help="指定 BGM 編號（例如 1 → bgm001.mp3）",
+    )
+    parser.add_argument(
+        "--bgm_vol",
+        type=float,
+        default=DEFAULT_BGM_VOLUME,
+        help=f"BGM 相對原聲的音量比例（預設 {DEFAULT_BGM_VOLUME}）",
+    )
     args = parser.parse_args()
 
     try:
         input_path = find_input_video()
-        process_video(input_path, args.profile)
+        process_video(input_path, args.profile, args.bgm_num, args.bgm_vol)
     except (FileNotFoundError, ValueError, RuntimeError) as e:
         print(f"錯誤：{e}", file=sys.stderr)
         sys.exit(1)
